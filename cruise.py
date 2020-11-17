@@ -21,11 +21,11 @@ MOTOR_MIN = 0.01
 MOTOR_MAX = 0.4
 STEER_MAX = 1
 
-KP_DISTANCE = 0.005
-KP_ANGLE = 1
+KP_DISTANCE = 0.015
+KP_ANGLE = 0.65
 
 
-def visualization(doshow, dosave, dovideo1, dovideo2, cam=1):
+def visualization(img_, text, doshow, dosave, dosavetext, dovideo1, dovideo2):
     global img1, img2
 
     def show():
@@ -35,12 +35,22 @@ def visualization(doshow, dosave, dovideo1, dovideo2, cam=1):
         cv2.destroyAllWindows()
 
     def save():
-        _, img = cv2.VideoCapture(cam).read()
+        # _, img = cv2.VideoCapture(cam).read()
         OUTPUT_DIR = 'images'
-        if not os.path.exists(OUTPUT_DIR): os.mkdir(OUTPUT_DIR)
+        if not os.path.exists(OUTPUT_DIR): os.mkdir(OUTPUT_DIR) 
         cv2.imwrite(OUTPUT_DIR + '/' + datetime.now().strftime('%Y-%m-%d %H-%M-%S.%f')[:-4]
-                    + '.jpg', img)
-        return img
+                    + '.jpg', img_)
+    def savetext():
+        # _, img = cv2.VideoCapture(cam).read()
+        OUTPUT_DIR = 'imagestext'
+        imgtext = img_
+        position = 30
+        for key, value in text.items():
+            cv2.putText(imgtext, key + ' = ' + str(value), (20, position), cv2.FONT_HERSHEY_PLAIN, 1.3, (128, 128, 128), 2)
+            position += 30
+        if not os.path.exists(OUTPUT_DIR): os.mkdir(OUTPUT_DIR) 
+        cv2.imwrite(OUTPUT_DIR + '/' + datetime.now().strftime('%Y-%m-%d %H-%M-%S.%f')[:-4]
+                    + 'text.jpg', imgtext)
 
     def video1():
         _, img1 = cv2.VideoCapture(0).read()
@@ -53,12 +63,14 @@ def visualization(doshow, dosave, dovideo1, dovideo2, cam=1):
         cv2.destroyAllWindows()
 
     if not doshow and not dosave and not dovideo1 and not devideo2: return
-
+    
+    
+    
     if doshow: show()
-    if dosave: img = save()
+    if dosave: save()
+    if savetext: savetext()
     if dovideo1: video1()
     if dovideo2: video2()
-    return img # TODO ldx modified
 
 
 def process(image):
@@ -125,6 +137,9 @@ def draw_points(image, left_, right_, mode='origin'):
     return image
 
 
+def cut(value, bit=3): return round(value, bit)
+
+
 def get_control(left_, right_):
     def least_squares(x, y):
         x_ = x.mean()
@@ -142,8 +157,8 @@ def get_control(left_, right_):
         b = y_ - a * x_
         return a, b
 
-    def constrain(value, threshold_min, threshold_max):
-        return min(max(value, threshold_min), threshold_max)
+    # def constrain(value, threshold_min, threshold_max):
+    #     return min(max(value, threshold_min), threshold_max)
 
     left_array = np.array(left_)
     right_array = np.array(right_)
@@ -163,12 +178,12 @@ def get_control(left_, right_):
         else:
             print("ERROR! (left_array[:, 1] == right_array[:, 1]).all() is FALSE")
     elif is_left_good:
-        # print('left')  # 只有左边线
+        print('left')  # 只有左边线
         a, b = least_squares(left_array[:, 1], left_array[:, 0])  # 求直线
         distance_error = - ONE_SIDE_OFFSET
         angle_error = np.arctan(a)  # in radian
     elif is_right_good:
-        # print('right')  # 只有右边线
+        print('right')  # 只有右边线
         a, b = least_squares(right_array[:, 1], right_array[:, 0])  # 求直线
         distance_error = ONE_SIDE_OFFSET
         angle_error = np.arctan(a)  # in radian
@@ -178,13 +193,41 @@ def get_control(left_, right_):
         angle_error = 0
         # TODO 维持之前的动作，设置一个keep的bool变量
 
-    # print('distance_error:', distance_error)
-    # print('angle_error:', angle_error)
+    print('distance_error:', distance_error)
+    print('angle_error:', angle_error)
 
     motor = MOTOR_MIN  # TODO motor 如何变化
     steer = KP_DISTANCE * distance_error + KP_ANGLE * angle_error
-    return motor, steer
+    # steer = constrain(steer, -STEER_MAX, STEER_MAX)
+    steer = np.clip(steer, -STEER_MAX, STEER_MAX)
 
+    text_dict = collections.OrderedDict()
+    text_dict['Time'] = time.strftime("%Y-%m-%d %H-%M-%S")
+    text_dict['Left'] = left_
+    text_dict['Right'] = right_
+    text_dict['Dist_err'] = int(distance_error)
+    text_dict['Ang_err'] = cut(angle_error)
+    text_dict['KP_DISTANCE'] = cut(KP_DISTANCE)
+    text_dict['KP_ANGLE'] = cut(KP_ANGLE)
+    text_dict['Motor'] = cut(motor)
+    text_dict['Steer'] = cut(steer)
+    return motor, steer, text_dict
+
+
+def get_img(camtype='front'):
+    if camtype == 'front':
+        _, img = cv2.VideoCapture(1).read()
+    elif camtype == 'back':
+        _, img = cv2.VideoCapture(0).read()
+    return img
+
+
+def control(d, motor, steer):
+    # global time_before
+    d.setStatus(motor=motor, servo=steer)
+    # current = time.time()
+    print('Time:', datetime.now().strftime('%H:%M:%S.%f')[:-4],'Motor:', motor, ',Steer: ', steer)
+    # time_before = current
 
 def cruise():
     d = driver()
@@ -193,21 +236,15 @@ def cruise():
 
     while 1:
         try:
-            # _, img = get_img(camera, closed_size)
-            # alpha, dist, black_depth, keep = get_error(img, up_step, black_step_max, dist_diff_max, black_depth_min, black_depth_max)
-            # if isfirst or not keep: motor, steer, text_dict = get_stanley_control(img, alpha, dist, motorAlphaPara, motorDistPara, motorMax, motorMin, steerAlphaPara, steerDistPara, steerMax)
-            # isfirst = False
-
-            # visualization(img, text_dict, closed_size, black_depth, doshow=False, dosave=False, dovideo=False)
-            img = visualization(doshow=False, dosave=True, dovideo1=False, dovideo2=False, cam=1)  # 1 front / 0 back
+            img = get_img(camtype='front')
             black_line_img = process(img)  # 处理后的图像
             left, right = get_points(black_line_img)
-            draw_point_img = draw_points(img, left, right)  # 对原图像画点
+            # print('left:', left, ', right:', right)
+            # draw_point_img = draw_points(img, left, right)  # 对原图像画点
             # cv2.imwrite('./output/' + str(idx) + '.jpg', black_line_img)   # 保存处理后的未画点图像
             # cv2.imwrite('./process/' + str(idx) + '.jpg', draw_point_img)  # 保存画点后的原图像
-            motor, steer = get_control(left, right)
-            # motor = -0.1
-            # steer = 0.0
+            motor, steer, text_dict = get_control(left, right)
+            # visualization(img_=img, text=text_dict, doshow=False, dosave=True, dosavetext=True, dovideo1=False, dovideo2=False)
             control(d, motor, steer)
         except KeyboardInterrupt:
             break
@@ -216,13 +253,6 @@ def cruise():
     d.close()
     del d
 
-
-def control(d, motor, steer):
-    # global time_before
-    d.setStatus(motor=motor, servo=steer)
-    # current = time.time()
-    print('[ Motor', motor, '] [ Steer', steer, ']\n')  # [ Time', cut(current - time_before), ']
-    # time_before = current
 
 
 if __name__ == '__main__':
